@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SISO Agent Brain — Architecture</title><style>:root{color-scheme:dark;--bg:#090d12;--panel:#121923;--line:#2b3748;--text:#eef3f8;--muted:#a4b0c1;--green:#72e3b1;--blue:#78baff}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:48px 24px 80px}h1{font-size:clamp(2.2rem,6vw,4.5rem);line-height:1;margin:.2em 0}h2{margin-top:2.4em}.eyebrow{color:var(--green);text-transform:uppercase;letter-spacing:.12em}.muted{color:var(--muted)}.flow{display:grid;grid-template-columns:1fr auto 1.25fr auto 1fr;gap:12px;align-items:stretch;margin:28px 0}.node{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}.node strong{display:block;color:var(--green);margin-bottom:7px}.arrow{display:grid;place-items:center;color:var(--blue);font-size:1.5rem}table{width:100%;border-collapse:collapse;background:var(--panel)}th,td{border:1px solid var(--line);padding:12px;text-align:left;vertical-align:top}code{color:var(--green)}.rule{border-left:4px solid var(--green);background:var(--panel);padding:16px 20px;margin:20px 0}@media(max-width:760px){.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}}</style></head><body><main>
+<p class="eyebrow">The Great Library of SISO · Agents</p><h1>The Brain stores shared truth. It does not become every system that remembers.</h1><p class="muted">Architecture snapshot · 2026-07-30 · versioned and open to replacement by better evidence</p>
+<div class="flow"><div class="node"><strong>Consumers</strong>Agent Zero, runtimes, project agents, CLIs, and approved services.</div><div class="arrow">→</div><div class="node"><strong>Agent Brain API</strong>Tiered auth · state contracts · single writer · degraded outbox.</div><div class="arrow">→</div><div class="node"><strong>SQLite</strong>Tasks · memory · timeline · fleet · costs · questions · divisions · governance.</div></div>
+<div class="rule"><strong>Boundary test:</strong> if a system can learn, schedule, route models, mine sources, manage workspaces, or speak without changing the shared-state schema/API, it belongs in another Work and integrates through this API.</div>
+
+<h2>What lives here</h2><table><thead><tr><th>Layer</th><th>Responsibility</th><th>Contract</th></tr></thead><tbody>
+<tr><td>Server</td><td>Authorized reads/writes and the one SQLite writer.</td><td>Loopback by default; public health reveals liveness, not records or paths.</td></tr>
+<tr><td>Client</td><td>Stable commands, token resolution, and unreachable-write queue.</td><td>URL, token directory, token, timeout, and outbox are configurable.</td></tr>
+<tr><td>Migrations</td><td>Complete empty-database bootstrap and future schema evolution.</td><td>Numbered, immutable, SHA-256 digest checked.</td></tr>
+<tr><td>Data portability</td><td>Dry-run/apply union of selected durable tables.</td><td>Allowlist only; unknown and live coordination tables never copy implicitly.</td></tr>
+</tbody></table>
+
+<h2>What stays outside</h2><table><thead><tr><th>Work</th><th>Relationship to the Brain</th></tr></thead><tbody>
+<tr><td>Agent Zero</td><td>Reads current state and writes decisions/heartbeats; owns human intent and coordination policy.</td></tr>
+<tr><td>Agent Runtime</td><td>Writes lifecycle, fleet, and cost events; owns model/session execution.</td></tr>
+<tr><td>Session Intelligence</td><td>Mines sessions and may promote learned memory; owns extraction, ranking, and privacy-sensitive source processing.</td></tr>
+<tr><td>Foundry</td><td>May record research outcomes; owns discovery, source ingestion, evaluation, and datasets.</td></tr>
+<tr><td>Herdr</td><td>Provides persistent workspace/pane mechanics; it is not a Brain service.</td></tr>
+<tr><td>Schedulers and provider infrastructure</td><td>Read/write state through APIs; own timing, execution authority, routing, and credentials.</td></tr>
+</tbody></table>
+
+<h2>Security posture</h2><ul><li>Read, write, and spawn tokens are separate files or an explicit environment token.</li><li>The default bind is loopback and the data-rendering face is off.</li><li>The public health endpoint excludes database paths and coordination records.</li><li>Database, tokens, outbox, logs, and runtime state are Git-ignored and never part of a release.</li><li>Uninstall removes code only; state survives package upgrades and removal.</li></ul>
+
+<h2>Evolution</h2><p>Work identity is stable; this layout is not sacred. New consumers should first use the API. A subsystem earns its own repository when it creates an independent outcome and can release without forcing an Agent Brain release.</p>
+</main></body></html>

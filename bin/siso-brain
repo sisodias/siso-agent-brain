@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Command client for SISO Agent Brain."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import ssl
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+HOME = Path.home()
+OUTBOX = Path(os.environ.get("SISO_BRAIN_OUTBOX", HOME / ".local/state/siso-agent-brain/outbox.ndjson"))
+
+
+def base_url() -> str:
+    return os.environ.get("SISO_BRAIN_URL", "http://127.0.0.1:8830").rstrip("/")
+
+
+def token() -> str:
+    direct = os.environ.get("SISO_BRAIN_TOKEN")
+    if direct:
+        return direct.strip()
+    token_dir = Path(os.environ.get("SISO_BRAIN_TOKENS_DIR", HOME / ".config/siso/brain-tokens"))
+    for tier in ("spawn", "write", "read"):
+        path = token_dir / f"{tier}.token"
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def request(method: str, path: str, body: dict | None = None, auth: bool = True, timeout: float | None = None) -> tuple[int | None, object]:
+    timeout = timeout if timeout is not None else float(os.environ.get("SISO_BRAIN_TIMEOUT_SECONDS", "10"))
+    payload = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base_url() + path, data=payload, method=method)
+    req.add_header("Content-Type", "application/json")
+    if auth and token():
+        req.add_header("Authorization", f"Bearer {token()}")
+    try:
+        with urllib.request.urlopen(req, context=ssl.create_default_context(), timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode())
+    except urllib.error.HTTPError as error:
+        try:
+            value = json.loads(error.read().decode() or "{}")
+        except json.JSONDecodeError:
+            value = {"error": str(error)}
+        return error.code, value
+    except Exception as error:
+        return None, {"error": str(error), "unreachable": True}
+
+
+def queue_write(path: str, body: dict) -> None:
+    OUTBOX.parent.mkdir(parents=True, exist_ok=True)
+    with OUTBOX.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"path": path, "body": body}, separators=(",", ":")) + "\n")
+
+
+def write(path: str, body: dict) -> tuple[int | None, object]:
+    code, response = request("POST", path, body)
+    if code is None and isinstance(response, dict) and response.get("unreachable"):
+        queue_write(path, body)
+        return None, {"queued": True, "outbox": str(OUTBOX), "note": "brain unreachable; run siso-brain drain"}
+    return code, response
+
+
+def output(result: tuple[int | None, object]) -> None:
+    code, response = result
+    print(json.dumps(response, indent=2, sort_keys=True))
+    if code is not None and code >= 400:
+        raise SystemExit(1)
+
+
+def query(path: str, values: dict[str, object | None]) -> str:
+    present = {key: value for key, value in values.items() if value is not None and value != ""}
+    return path + ("?" + urllib.parse.urlencode(present) if present else "")
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(prog="siso-brain")
+    sub = root.add_subparsers(dest="command", required=True)
+    for name in ("health", "fleet", "halt-status", "questions", "divisions", "roundup", "digest", "drain"):
+        sub.add_parser(name)
+
+    tasks = sub.add_parser("tasks"); tasks.add_argument("--agent")
+    recall = sub.add_parser("memory-recall"); recall.add_argument("--q", default=""); recall.add_argument("--tier"); recall.add_argument("--agent")
+    memory = sub.add_parser("memory-write"); memory.add_argument("--content", required=True); memory.add_argument("--agent"); memory.add_argument("--tier", default="episodic"); memory.add_argument("--type", default="semantic_fact"); memory.add_argument("--confidence", type=float, default=0.6); memory.add_argument("--task")
+    timeline = sub.add_parser("timeline"); timeline.add_argument("--agent", required=True); timeline.add_argument("--type", required=True); timeline.add_argument("--message"); timeline.add_argument("--task")
+    heartbeat = sub.add_parser("heartbeat"); heartbeat.add_argument("--id", required=True); heartbeat.add_argument("--name"); heartbeat.add_argument("--machine"); heartbeat.add_argument("--cwd", default=os.getcwd()); heartbeat.add_argument("--status", default="running")
+    cost = sub.add_parser("cost"); cost.add_argument("--agent"); cost.add_argument("--run"); cost.add_argument("--cli"); cost.add_argument("--model"); cost.add_argument("--tokens-in", type=int, default=0); cost.add_argument("--tokens-out", type=int, default=0); cost.add_argument("--usd", type=float, default=0.0)
+    notifications = sub.add_parser("notifications"); notifications.add_argument("--unseen", action="store_true")
+    notify = sub.add_parser("notify"); notify.add_argument("--summary", required=True); notify.add_argument("--body"); notify.add_argument("--urgency", default="normal"); notify.add_argument("--from-agent")
+    question = sub.add_parser("question-ask"); question.add_argument("--question", required=True); question.add_argument("--from-agent"); question.add_argument("--option", action="append"); question.add_argument("--blocking-task")
+    answer = sub.add_parser("answer"); answer.add_argument("--id", required=True); answer.add_argument("--answer", required=True)
+    halt = sub.add_parser("halt"); halt.add_argument("--scope", default="global"); halt.add_argument("--reason"); halt.add_argument("--resume", action="store_true")
+    register = sub.add_parser("division-register"); register.add_argument("--id", required=True); register.add_argument("--name", required=True); register.add_argument("--repo"); register.add_argument("--orchestrator"); register.add_argument("--status", default="active")
+    delegate = sub.add_parser("delegate"); delegate.add_argument("--division", required=True); delegate.add_argument("--intent", required=True); delegate.add_argument("--from-agent", default="agent-zero")
+    inbox = sub.add_parser("inbox"); inbox.add_argument("--division", required=True)
+    reply = sub.add_parser("inbox-reply"); reply.add_argument("--division", required=True); reply.add_argument("--body", required=True); reply.add_argument("--kind", default="status"); reply.add_argument("--ack-intent")
+    gate = sub.add_parser("gate"); gate.add_argument("--tier", default="T1"); gate.add_argument("--unit"); gate.add_argument("--division")
+    challenge = sub.add_parser("challenge"); challenge.add_argument("--target", required=True); challenge.add_argument("--argument", required=True); challenge.add_argument("--challenger"); challenge.add_argument("--rating", type=int)
+    unit = sub.add_parser("unit-register"); unit.add_argument("--id", required=True); unit.add_argument("--kind"); unit.add_argument("--tier", default="capability"); unit.add_argument("--provenance"); unit.add_argument("--rating", type=int)
+    outcome = sub.add_parser("unit-record-outcome"); outcome.add_argument("--id", required=True); outcome.add_argument("--verdict", choices=("worked", "no-effect", "regressed"), required=True)
+    return root
+
+
+def drain() -> tuple[int | None, object]:
+    if not OUTBOX.exists():
+        return 200, {"drained": 0, "remaining": 0}
+    lines = [line for line in OUTBOX.read_text(encoding="utf-8").splitlines() if line.strip()]
+    remaining: list[str] = []
+    drained = 0
+    for line in lines:
+        item = json.loads(line)
+        code, _ = request("POST", item["path"], item["body"])
+        if code is not None and code < 400:
+            drained += 1
+        else:
+            remaining.append(line)
+    OUTBOX.write_text(("\n".join(remaining) + "\n") if remaining else "", encoding="utf-8")
+    return 200, {"drained": drained, "remaining": len(remaining)}
+
+
+def main() -> None:
+    args = parser().parse_args()
+    command = args.command
+    if command == "health": output(request("GET", "/health", auth=False))
+    elif command == "fleet": output(request("GET", "/fleet"))
+    elif command == "tasks": output(request("GET", query("/tasks", {"agent": args.agent})))
+    elif command == "memory-recall": output(request("GET", query("/memory/recall", {"q": args.q, "tier": args.tier, "agent": args.agent})))
+    elif command == "memory-write": output(write("/memory/write", {"content": args.content, "agent_id": args.agent, "tier": args.tier, "type": args.type, "confidence": args.confidence, "task_id": args.task}))
+    elif command == "timeline": output(write("/timeline/append", {"agent_id": args.agent, "event_type": args.type, "message": args.message, "task_id": args.task}))
+    elif command == "heartbeat": output(write("/fleet/heartbeat", {"id": args.id, "name": args.name or args.id, "machine": args.machine, "cwd": args.cwd, "status": args.status}))
+    elif command == "cost": output(write("/cost/add", {"agent_id": args.agent, "run_id": args.run, "cli": args.cli, "model": args.model, "tokens_in": args.tokens_in, "tokens_out": args.tokens_out, "est_usd": args.usd}))
+    elif command == "halt-status": output(request("GET", "/halt/status"))
+    elif command == "questions": output(request("GET", "/questions"))
+    elif command == "notifications": output(request("GET", "/notifications" + ("?unseen=1" if args.unseen else "")))
+    elif command == "notify": output(write("/notify", {"summary": args.summary, "body": args.body, "urgency": args.urgency, "from_agent": args.from_agent}))
+    elif command == "question-ask": output(write("/ask", {"question": args.question, "from_agent": args.from_agent, "options": args.option, "blocking_task_id": args.blocking_task}))
+    elif command == "answer": output(write("/answer", {"id": args.id, "answer": args.answer}))
+    elif command == "halt": output(write("/halt", {"scope": args.scope, "reason": args.reason, "resume": args.resume}))
+    elif command == "divisions": output(request("GET", "/divisions"))
+    elif command == "roundup": output(request("GET", "/roundup"))
+    elif command == "division-register": output(write("/divisions/register", {"id": args.id, "name": args.name, "repo_path": args.repo, "orchestrator": args.orchestrator, "status": args.status}))
+    elif command == "delegate": output(write("/delegate", {"division": args.division, "intent": args.intent, "from_agent": args.from_agent}))
+    elif command == "inbox": output(request("GET", query("/inbox", {"division": args.division})))
+    elif command == "inbox-reply": output(write("/inbox/reply", {"division": args.division, "body": args.body, "kind": args.kind, "ack_intent": args.ack_intent}))
+    elif command == "gate": output(request("GET", query("/gate", {"tier": args.tier, "unit": args.unit, "division": args.division})))
+    elif command == "digest": output(request("GET", "/digest"))
+    elif command == "challenge": output(write("/challenge", {"target": args.target, "argument": args.argument, "challenger": args.challenger, "rating": args.rating}))
+    elif command == "unit-register": output(write("/unit/register", {"id": args.id, "kind": args.kind, "tier": args.tier, "provenance": args.provenance, "rating": args.rating}))
+    elif command == "unit-record-outcome": output(write("/unit/record-outcome", {"unit_id": args.id, "verdict": args.verdict}))
+    elif command == "drain": output(drain())
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "observed_at": "2026-07-30",
+  "source_boundary": "$SISO_WORKSPACE/SISO_Agent_Base/extensions/braind",
+  "modules": [
+    {"source":"braind.py","destination":"src/server.py","state":"promoted_and_refactored","reason":"Owns the shared-state API; consumer-specific routes were removed."},
+    {"source":"siso-brain","destination":"bin/siso-brain","state":"promoted_and_refactored","reason":"Owns the portable client and degraded-write outbox contract."},
+    {"source":"migrations/002..007","destination":"migrations/001_core.sql + migrations/002_coordination.sql","state":"promoted_and_repaired","reason":"The warehouse omitted its base schema and contained non-idempotent, runtime-incompatible evolution."},
+    {"source":"spine_merge.py","destination":"tools/spine_merge.py","state":"promoted_and_narrowed","reason":"Durable state portability belongs here; only explicit Brain tables may merge."},
+    {"source":"brain_intent.py + session_extract route","destination":null,"state":"reclassified","candidate_home":"siso-session-intelligence","reason":"Session-derived ranking and intent routing are learned intelligence, not shared-state storage."},
+    {"source":"farm-harvest.py + farm migration/routes","destination":null,"state":"reclassified","candidate_home":"siso-foundry","reason":"Source discovery and candidate evaluation belong to Research/Foundry."},
+    {"source":"sched-runner.py","destination":null,"state":"deferred","candidate_home":"future agent-automation Work","reason":"Scheduling commands is execution policy, not the shared-state service."},
+    {"source":"fairshare-shim.py + update-minimax-key.sh","destination":null,"state":"reclassified","candidate_home":"siso-agent-integrations","reason":"Provider routing, concurrency, and key operations are model infrastructure."},
+    {"source":"service-probe.py + siso-doctor.py","destination":null,"state":"reclassified","candidate_home":"siso-agent-runtime","reason":"System-wide diagnostics span runtime components and should not be owned by the database service."},
+    {"source":"launchd plists + ship_spine_delta.sh","destination":null,"state":"deferred","candidate_home":"future deployment/operator pack","reason":"Host installation and cross-host transport need an independent operator contract."}
+  ]
+}

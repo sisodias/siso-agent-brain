@@ -1,0 +1,10 @@
+{
+  "name": "siso-agent-brain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared state, memory, tasks, fleet, and timeline service for agent operating stacks.",
+  "scripts": {
+    "test": "python3 scripts/check_repo.py"
+  },
+  "license": "MIT"
+}
