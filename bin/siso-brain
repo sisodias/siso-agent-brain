@@ -86,7 +86,27 @@ def parser() -> argparse.ArgumentParser:
     for name in ("health", "fleet", "halt-status", "questions", "divisions", "roundup", "digest", "drain"):
         sub.add_parser(name)
 
-    tasks = sub.add_parser("tasks"); tasks.add_argument("--agent")
+    tasks = sub.add_parser("tasks"); tasks.add_argument("--agent"); tasks.add_argument("--id"); tasks.add_argument("--status"); tasks.add_argument("--all", action="store_true")
+    task_create = sub.add_parser("task-create")
+    task_create.add_argument("--id"); task_create.add_argument("--title"); task_create.add_argument("--description", required=True)
+    task_create.add_argument("--project"); task_create.add_argument("--agent"); task_create.add_argument("--created-by")
+    task_create.add_argument("--priority", default="medium"); task_create.add_argument("--urgency", type=int, default=0)
+    task_create.add_argument("--parent"); task_create.add_argument("--blocked-by"); task_create.add_argument("--tag", action="append")
+    task_update = sub.add_parser("task-update")
+    task_update.add_argument("--id", required=True); task_update.add_argument("--title"); task_update.add_argument("--description")
+    task_update.add_argument("--status"); task_update.add_argument("--agent"); task_update.add_argument("--priority")
+    task_update.add_argument("--urgency", type=int); task_update.add_argument("--notes")
+    steps = sub.add_parser("steps"); steps.add_argument("--role"); steps.add_argument("--task"); steps.add_argument("--status")
+    step_add = sub.add_parser("step-add")
+    step_add.add_argument("--id"); step_add.add_argument("--task", required=True); step_add.add_argument("--name", required=True)
+    step_add.add_argument("--role"); step_add.add_argument("--order", type=int, default=0); step_add.add_argument("--input")
+    step_claim = sub.add_parser("step-claim"); step_claim.add_argument("--role", required=True); step_claim.add_argument("--by")
+    step_update = sub.add_parser("step-update")
+    step_update.add_argument("--id", required=True); step_update.add_argument("--status", choices=("pending", "in_progress", "retry", "done", "error", "cancelled"), required=True)
+    step_update.add_argument("--output"); step_update.add_argument("--error")
+    artifact_write = sub.add_parser("artifact-write")
+    artifact_write.add_argument("--task", required=True); artifact_write.add_argument("--type", required=True); artifact_write.add_argument("--content", required=True); artifact_write.add_argument("--step")
+    artifact_latest = sub.add_parser("artifact-latest"); artifact_latest.add_argument("--task", required=True); artifact_latest.add_argument("--type", required=True)
     recall = sub.add_parser("memory-recall"); recall.add_argument("--q", default=""); recall.add_argument("--tier"); recall.add_argument("--agent")
     memory = sub.add_parser("memory-write"); memory.add_argument("--content", required=True); memory.add_argument("--agent"); memory.add_argument("--tier", default="episodic"); memory.add_argument("--type", default="semantic_fact"); memory.add_argument("--confidence", type=float, default=0.6); memory.add_argument("--task")
     timeline = sub.add_parser("timeline"); timeline.add_argument("--agent", required=True); timeline.add_argument("--type", required=True); timeline.add_argument("--message"); timeline.add_argument("--task")
@@ -130,7 +150,33 @@ def main() -> None:
     command = args.command
     if command == "health": output(request("GET", "/health", auth=False))
     elif command == "fleet": output(request("GET", "/fleet"))
-    elif command == "tasks": output(request("GET", query("/tasks", {"agent": args.agent})))
+    elif command == "tasks": output(request("GET", query("/tasks", {"agent": args.agent, "id": args.id, "status": args.status, "all": 1 if args.all else None})))
+    elif command == "task-create": output(write("/tasks/create", {
+        "id": args.id, "title": args.title, "description": args.description, "project_id": args.project,
+        "assigned_agent_id": args.agent, "created_by_agent_id": args.created_by, "priority": args.priority,
+        "urgency_score": args.urgency, "parent_task_id": args.parent, "blocked_by_task_id": args.blocked_by,
+        "tags": ",".join(args.tag or []),
+    }))
+    elif command == "task-update": output(write("/tasks/update", {
+        key: value for key, value in {
+            "id": args.id, "title": args.title, "description": args.description, "status": args.status,
+            "assigned_agent_id": args.agent, "priority": args.priority, "urgency_score": args.urgency,
+            "notes": args.notes,
+        }.items() if value is not None
+    }))
+    elif command == "steps": output(request("GET", query("/task-steps", {"role": args.role, "task": args.task, "status": args.status})))
+    elif command == "step-add": output(write("/task-steps/add", {
+        "id": args.id, "task_id": args.task, "step_name": args.name, "assigned_role": args.role,
+        "step_order": args.order, "input_payload": args.input,
+    }))
+    elif command == "step-claim": output(write("/task-steps/claim", {"role": args.role, "claimed_by": args.by}))
+    elif command == "step-update": output(write("/task-steps/update", {
+        "id": args.id, "status": args.status, "output_payload": args.output, "error_log": args.error,
+    }))
+    elif command == "artifact-write": output(write("/task-artifacts/write", {
+        "task_id": args.task, "artifact_type": args.type, "content": args.content, "step_id": args.step,
+    }))
+    elif command == "artifact-latest": output(request("GET", query("/task-artifacts/latest", {"task": args.task, "type": args.type})))
     elif command == "memory-recall": output(request("GET", query("/memory/recall", {"q": args.q, "tier": args.tier, "agent": args.agent})))
     elif command == "memory-write": output(write("/memory/write", {"content": args.content, "agent_id": args.agent, "tier": args.tier, "type": args.type, "confidence": args.confidence, "task_id": args.task}))
     elif command == "timeline": output(write("/timeline/append", {"agent_id": args.agent, "event_type": args.type, "message": args.message, "task_id": args.task}))

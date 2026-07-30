@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SISO Task &amp; State System Map</title>
+  <style>
+    :root{color-scheme:dark;--bg:#080c12;--panel:#111923;--line:#293649;--text:#eef4fa;--muted:#a8b4c5;--green:#70e3af;--blue:#73b7ff;--amber:#f1c66d;--red:#ff8585}*{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#080c12,#0c1420 55%,#090d13);color:var(--text);font:16px/1.55 system-ui,sans-serif}main{max-width:1160px;margin:auto;padding:52px 24px 90px}h1{font-size:clamp(2.25rem,6vw,5rem);line-height:.98;margin:.15em 0 .3em;max-width:960px}h2{margin-top:2.6em}.eyebrow{color:var(--green);text-transform:uppercase;letter-spacing:.13em;font-weight:700}.lede,.muted{color:var(--muted)}.lede{font-size:1.15rem;max-width:850px}.decision{border:1px solid var(--green);background:rgba(112,227,175,.07);border-radius:18px;padding:22px;margin:30px 0}.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:18px}.card strong{display:block;color:var(--green);font-size:1.06rem;margin-bottom:6px}.card small{color:var(--muted)}table{width:100%;border-collapse:collapse;background:var(--panel);font-size:.94rem}th,td{border:1px solid var(--line);padding:12px;text-align:left;vertical-align:top}th{color:var(--blue)}code{color:var(--green)}.yes{color:var(--green)}.move{color:var(--blue)}.wait{color:var(--amber)}.retire{color:var(--red)}.rule{border-left:4px solid var(--blue);padding:15px 18px;background:var(--panel);margin:18px 0}.footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:.9rem}@media(max-width:850px){.flow{grid-template-columns:1fr 1fr}}@media(max-width:560px){.flow{grid-template-columns:1fr}table{font-size:.82rem}th,td{padding:8px}}
+  </style>
+</head>
+<body><main>
+  <p class="eyebrow">The Great Library of SISO · Agents · Architecture decision</p>
+  <h1>One shared task brain, not three competing databases.</h1>
+  <p class="lede">This map records what was learned by reading OS Database, Task Manager, PM Tasks, and the published Agent Brain. It is a dated decision with machine-verifiable receipts—not a permanent claim that today’s layout is sacred.</p>
+
+  <div class="decision"><strong>Decision · 2026-07-30</strong><br>Agent Brain owns shared task state and its API. Project OS owns project structure. Runtime owns session execution. Skills Hub describes callable capabilities. Playbooks own composed procedures. The legacy folders are decomposed along those boundaries rather than promoted wholesale.</div>
+
+  <h2>The operating flow</h2>
+  <div class="flow">
+    <div class="card"><strong>Project OS</strong><small>Defines the project, intent, goals, repository rules, and adoption configuration.</small></div>
+    <div class="card"><strong>Agent Brain</strong><small>Stores tasks, atomic step claims, task artifacts, memory, timeline, and coordination state.</small></div>
+    <div class="card"><strong>Agent Runtime</strong><small>Executes sessions and tools, then reports durable facts through the Brain API.</small></div>
+    <div class="card"><strong>Skills &amp; Playbooks</strong><small>Describe atomic capabilities and composed operating procedures; they do not own another database.</small></div>
+  </div>
+
+  <div class="rule"><strong>First-principles test:</strong> data that multiple agents must agree on belongs behind one state contract. Behavior that can change without changing shared state belongs in its own Work and integrates through that contract.</div>
+
+  <h2>Capability-by-capability result</h2>
+  <table><thead><tr><th>Observed capability</th><th>Canonical home</th><th>Decision</th><th>Why</th></tr></thead><tbody>
+    <tr><td>Task create, read, update, archive</td><td>Agent Brain</td><td class="yes">Implemented</td><td>Shared durable truth; writes are allowlisted and authorized.</td></tr>
+    <tr><td>Role queue and task steps</td><td>Agent Brain</td><td class="yes">Implemented</td><td>The prior select-then-update race is replaced by one immediate write transaction.</td></tr>
+    <tr><td>Versioned task artifacts</td><td>Agent Brain</td><td class="yes">Implemented</td><td>Artifacts are immutable versions attached to a task and optional step.</td></tr>
+    <tr><td>Task memory and execution history</td><td>Agent Brain</td><td class="yes">Reused</td><td>Existing memory and typed timeline contracts replace duplicate tables.</td></tr>
+    <tr><td>Sessions and tool execution</td><td>Agent Runtime</td><td class="move">Reclassified</td><td>A session is execution lifecycle, not database ownership.</td></tr>
+    <tr><td>Projects, missions, goals</td><td>Project OS</td><td class="move">Reclassified</td><td>Planning structure varies by project; Brain retains a project locator on tasks.</td></tr>
+    <tr><td>Skill/tool catalog</td><td>Skills Hub</td><td class="move">Reclassified</td><td>Discovery and install metadata version with the capability registry.</td></tr>
+    <tr><td>Templates and multi-step pipelines</td><td>Agent Playbooks</td><td class="move">Reclassified</td><td>A reusable composition is a playbook, not a state-table feature.</td></tr>
+    <tr><td>Scheduled automations</td><td>Future Agent Automation Work</td><td class="wait">Deferred</td><td>Timing and execution authority need an operator contract independent of storage.</td></tr>
+    <tr><td>Custom fields and generic relationship graph</td><td>Unverified</td><td class="wait">Deferred</td><td>No current consumer evidence justifies importing schema surface.</td></tr>
+    <tr><td>Arbitrary raw SQL</td><td>None</td><td class="retire">Retired</td><td>A public skill adapter must expose stable commands, not database internals.</td></tr>
+    <tr><td>Machine paths and runtime database files</td><td>None</td><td class="retire">Retired</td><td>Configuration is explicit; state never ships as source.</td></tr>
+  </tbody></table>
+
+  <h2>What happens to the three legacy units</h2>
+  <table><thead><tr><th>Unit</th><th>Disposition</th><th>Migration rule</th></tr></thead><tbody>
+    <tr><td><code>os-database</code></td><td>Decompose, then retire</td><td>Port only proven behavior to its owning Work. Preserve the reviewed source until migration fixtures prove data portability.</td></tr>
+    <tr><td><code>task-manager</code></td><td>Replace with Brain adapter</td><td>Keep familiar commands where useful, but route all reads and writes through <code>siso-brain</code>.</td></tr>
+    <tr><td><code>pm-tasks</code></td><td>Retire after adapter</td><td>It has no independent outcome and currently confuses task IDs with step IDs.</td></tr>
+  </tbody></table>
+
+  <h2>Receipts and reversibility</h2>
+  <p><code>migrations/003_task_workflow.sql</code> is additive; older migrations remain immutable. <code>npm test</code> creates an isolated database, races two claimants against one step, verifies exactly one claim wins, checks task completion and artifact versioning, replays the offline outbox, merges durable task state, and confirms uninstall preserves data. The machine-readable classification is <code>LEGACY-TASK-STATE-ASSESSMENT.json</code>.</p>
+  <p class="muted">If future evidence shows task workflow deserves a separate service, the stable capability can move behind a new locator. Consumers should depend on the contract, not this repository path.</p>
+
+  <div class="footer">The Great Library of SISO — Built by the SISO Open Source Foundation · Funded by SISO Agency.</div>
+</main></body></html>

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -18,10 +19,11 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
-    "README.md", "LICENSE", "AGENTS.md", "PROVENANCE.md", "MIGRATION-MAP.json",
+    "README.md", "LICENSE", "AGENTS.md", "PROVENANCE.md", "MIGRATION-MAP.json", "LEGACY-TASK-STATE-ASSESSMENT.json",
     "src/server.py", "bin/siso-brain", "bin/siso-brain-server",
-    "migrations/001_core.sql", "migrations/002_coordination.sql",
-    "scripts/migrate.py", "tools/spine_merge.py", "docs/ARCHITECTURE.html",
+    "migrations/001_core.sql", "migrations/002_coordination.sql", "migrations/003_task_workflow.sql",
+    "scripts/migrate.py", "tools/spine_merge.py", "docs/ARCHITECTURE.html", "docs/TASK-STATE-MIGRATION.html",
+    "reports/task-state-migration-checkpoint.html", "reports/implementation-runs.jsonl",
     "install.sh", "uninstall.sh",
 ]
 TEXT_SUFFIXES = {".md", ".html", ".json", ".jsonl", ".py", ".sh", ".sql", ""}
@@ -56,6 +58,10 @@ def check_syntax() -> None:
     for path in ("bin/siso-brain-server", "install.sh", "uninstall.sh"):
         run(["zsh", "-n", path])
     json.loads((ROOT / "MIGRATION-MAP.json").read_text(encoding="utf-8"))
+    assessment = json.loads((ROOT / "LEGACY-TASK-STATE-ASSESSMENT.json").read_text(encoding="utf-8"))
+    states = {item["capability"]: item["state"] for item in assessment["capabilities"]}
+    assert states["task lifecycle"] == "implemented"
+    assert states["raw SQL query"] == "retired"
 
 
 def free_port() -> int:
@@ -126,7 +132,7 @@ def check_live_contract(folder: Path) -> None:
     env = server_env(folder, port)
     first = run(["scripts/migrate.py"], env=env).stdout
     second = run(["scripts/migrate.py"], env=env).stdout
-    assert "applied=2" in first and "applied=0" in second
+    assert "applied=3" in first and "applied=0" in second
 
     process = start_server(env)
     try:
@@ -140,6 +146,38 @@ def check_live_contract(folder: Path) -> None:
 
         assert client(env, "heartbeat", "--id", "worker-1", "--machine", "test")["ok"]
         assert client(env, "fleet")["count"] == 1
+        created = client(env, "task-create", "--id", "task-live-1", "--title", "Verify task contract",
+                         "--description", "Exercise the canonical task workflow", "--project", "library",
+                         "--agent", "worker-1", "--urgency", "80")
+        assert created["ok"] and client(env, "tasks", "--id", "task-live-1")["count"] == 1
+        assert client(env, "step-add", "--id", "step-live-1", "--task", "task-live-1",
+                      "--name", "implement", "--role", "builder", "--order", "1")["ok"]
+        assert client(env, "step-add", "--id", "step-live-2", "--task", "task-live-1",
+                      "--name", "verify", "--role", "builder", "--order", "2")["ok"]
+        claimed = client(env, "step-claim", "--role", "builder", "--by", "worker-1")
+        assert claimed["claimed"] and claimed["step"]["id"] == "step-live-1"
+        second_claim = client(env, "step-claim", "--role", "builder", "--by", "worker-2")
+        assert second_claim["claimed"] and second_claim["step"]["id"] == "step-live-2"
+        assert client(env, "step-claim", "--role", "builder")["claimed"] is False
+        assert client(env, "step-update", "--id", "step-live-1", "--status", "done", "--output", '{"ok":true}')["ok"]
+        assert client(env, "step-update", "--id", "step-live-2", "--status", "done")["ok"]
+        assert client(env, "tasks", "--id", "task-live-1")["tasks"][0]["status"] == "completed"
+        first_artifact = client(env, "artifact-write", "--task", "task-live-1", "--type", "report", "--content", "v1")
+        second_artifact = client(env, "artifact-write", "--task", "task-live-1", "--type", "report", "--content", "v2")
+        assert first_artifact["version"] == 1 and second_artifact["version"] == 2
+        latest = client(env, "artifact-latest", "--task", "task-live-1", "--type", "report")
+        assert latest["found"] and latest["artifact"]["content"] == "v2"
+        assert client(env, "task-update", "--id", "task-live-1", "--status", "archived")["updated"] == 1
+
+        assert client(env, "task-create", "--id", "task-race", "--description", "atomic claim receipt")["ok"]
+        assert client(env, "step-add", "--id", "step-race", "--task", "task-race",
+                      "--name", "claim once", "--role", "racer")["ok"]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claims = list(pool.map(
+                lambda worker: client(env, "step-claim", "--role", "racer", "--by", worker),
+                ("race-1", "race-2"),
+            ))
+        assert sorted(claim["claimed"] for claim in claims) == [False, True]
         assert client(env, "memory-write", "--content", "repository boundaries follow outcomes", "--agent", "worker-1")["ok"]
         assert client(env, "memory-recall", "--q", "boundaries")["count"] == 1
         assert client(env, "timeline", "--agent", "worker-1", "--type", "ACTION", "--message", "verified")["ok"]
@@ -187,15 +225,23 @@ def check_merge(folder: Path) -> None:
     run(["scripts/migrate.py", "--database", str(source)])
     run(["scripts/migrate.py", "--database", str(target)])
     with sqlite3.connect(source) as connection:
+        connection.execute("INSERT INTO tasks(id,description) VALUES('merge-task','merge task')")
+        connection.execute("INSERT INTO task_steps(id,task_id,step_name) VALUES('merge-step','merge-task','verify')")
+        connection.execute("INSERT INTO task_artifacts(id,task_id,step_id,artifact_type,content,version) "
+                           "VALUES('merge-artifact','merge-task','merge-step','report','receipt',1)")
         connection.execute("INSERT INTO memories(id,type,content) VALUES('merge-memory','semantic_fact','merge me')")
         connection.commit()
     run(["tools/spine_merge.py", "--source", str(source), "--target", str(target), "--quiet"])
     with sqlite3.connect(target) as connection:
         assert connection.execute("SELECT count(*) FROM memories").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM task_steps").fetchone()[0] == 0
     run(["tools/spine_merge.py", "--source", str(source), "--target", str(target), "--apply", "--quiet"])
     again = run(["tools/spine_merge.py", "--source", str(source), "--target", str(target), "--apply", "--quiet"]).stdout
     with sqlite3.connect(target) as connection:
         assert connection.execute("SELECT count(*) FROM memories").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM tasks WHERE id='merge-task'").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM task_steps WHERE id='merge-step'").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM task_artifacts WHERE id='merge-artifact'").fetchone()[0] == 1
     assert "inserted=0" in again
 
 
@@ -224,7 +270,7 @@ def main() -> None:
         check_live_contract(folder / "live")
         check_merge(folder / "merge")
         check_install(folder / "install")
-    print("AGENT_BRAIN_CHECK_OK (publication, schema, live API, auth, outbox, merge, install, state-preserving uninstall)")
+    print("AGENT_BRAIN_CHECK_OK (publication, schema, task workflow, atomic claim, artifacts, live API, auth, outbox, merge, install, state-preserving uninstall)")
 
 
 if __name__ == "__main__":

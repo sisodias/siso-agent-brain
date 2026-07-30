@@ -1,6 +1,6 @@
 # SISO Agent Brain
 
-SISO Agent Brain is the shared state service for an agent operating stack: tasks, memories, timeline, fleet heartbeats, costs, human questions, divisions, delegation inboxes, control flags, and governed units.
+SISO Agent Brain is the shared state service for an agent operating stack: task lifecycle and queues, versioned task artifacts, memories, timeline, fleet heartbeats, costs, human questions, divisions, delegation inboxes, control flags, and governed units.
 
 It is **not** Agent Zero, Session Intelligence, Foundry, a scheduler, a model router, or a secrets manager. Those systems use the Brain through its API and keep independent source and release lifecycles.
 
@@ -17,6 +17,11 @@ openssl rand -hex 32 > ~/.config/siso/brain-tokens/spawn.token
 siso-brain-server
 siso-brain health
 SISO_BRAIN_TOKEN="$(cat ~/.config/siso/brain-tokens/write.token)" siso-brain heartbeat --id local-agent
+
+siso-brain task-create --id TASK-001 --description "Map the task system" --agent local-agent --urgency 80
+siso-brain step-add --task TASK-001 --name implement --role builder --order 1
+siso-brain step-claim --role builder --by local-agent
+siso-brain step-update --id <claimed-step-id> --status done
 ```
 
 The server binds to `127.0.0.1:8830`, creates `~/.local/share/siso-agent-brain/brain.db`, and applies immutable migrations. Override those with `SISO_BRAIN_BIND`, `SISO_BRAIN_PORT`, and `SISO_DB`.
@@ -27,9 +32,10 @@ The human dashboard is disabled by default because it renders coordination data.
 
 - Read, write, and spawn tokens form an ordered authorization hierarchy.
 - The SQLite file has one service writer; clients never open it directly.
+- Task claims use an immediate write transaction, so two workers cannot receive the same pending step.
 - Unreachable writes enter a configurable local outbox and can be replayed with `siso-brain drain`.
 - Migrations are immutable and digest-checked.
 - Database union is dry-run by default and allowlists only durable tables.
 - Uninstall removes package code and executable links, never the database, tokens, or outbox.
 
-Read [`docs/ARCHITECTURE.html`](docs/ARCHITECTURE.html) and [`MIGRATION-MAP.json`](MIGRATION-MAP.json). Run `npm test` before publishing.
+Read [`docs/ARCHITECTURE.html`](docs/ARCHITECTURE.html), [`docs/TASK-STATE-MIGRATION.html`](docs/TASK-STATE-MIGRATION.html), [`MIGRATION-MAP.json`](MIGRATION-MAP.json), and [`LEGACY-TASK-STATE-ASSESSMENT.json`](LEGACY-TASK-STATE-ASSESSMENT.json). Run `npm test` before publishing.

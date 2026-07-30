@@ -31,6 +31,13 @@ FACE_ENABLED = os.environ.get("SISO_BRAIN_FACE_ENABLED", "0") == "1"
 TIERS = ["read", "write", "spawn"]
 UNIT_TIERS = ["disposable", "capability", "core", "contract"]
 UNIT_AUTO_PROMOTE_STREAK = 3
+TASK_STATUSES = {"pending", "in_progress", "blocked", "completed", "cancelled", "archived", "failed"}
+STEP_STATUSES = {"pending", "in_progress", "retry", "done", "error", "cancelled"}
+TASK_UPDATE_FIELDS = {
+    "title", "description", "status", "assigned_agent_id", "priority", "due_date",
+    "notes", "urgency_score", "tags", "executive_summary", "workspace_path",
+    "project_id", "parent_task_id", "blocked_by_task_id", "estimated_minutes",
+}
 
 
 def _load_tokens():
@@ -61,6 +68,7 @@ def _db():
     c = sqlite3.connect(DB_PATH, timeout=10)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA busy_timeout=5000")
+    c.execute("PRAGMA foreign_keys=ON")
     return c
 
 
@@ -146,6 +154,18 @@ def _unit_record_outcome(c, unit_id, verdict):
 
 def _rows(cur):
     return [dict(r) for r in cur.fetchall()]
+
+
+def _json_text(value):
+    """Store structured payloads consistently while accepting legacy JSON strings."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        try:
+            return json.dumps(json.loads(value), separators=(",", ":"))
+        except json.JSONDecodeError:
+            return json.dumps(value)
+    return json.dumps(value, separators=(",", ":"))
 
 
 def _esc(s):
@@ -283,10 +303,23 @@ class Handler(BaseHTTPRequestHandler):
             if not self._auth("read"):
                 return
             c = _db()
+            task_id = q.get("id")
             agent = q.get("agent")
+            status = q.get("status")
+            include_all = q.get("all") == "1"
             # 'active' = not in a terminal state (exclude completed/cancelled/archived noise)
             ACTIVE = "status NOT IN ('completed','cancelled','archived','done')"
-            if agent:
+            if task_id:
+                cur = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,))
+            elif agent and status:
+                cur = c.execute("SELECT * FROM tasks WHERE assigned_agent_id=? AND status=? "
+                                "ORDER BY urgency_score DESC, created_at ASC", (agent, status))
+            elif status:
+                cur = c.execute("SELECT * FROM tasks WHERE status=? "
+                                "ORDER BY urgency_score DESC, created_at ASC LIMIT 200", (status,))
+            elif include_all:
+                cur = c.execute("SELECT * FROM tasks ORDER BY urgency_score DESC, created_at ASC LIMIT 500")
+            elif agent:
                 cur = c.execute(f"SELECT * FROM tasks WHERE assigned_agent_id=? AND {ACTIVE} "
                                 "ORDER BY urgency_score DESC, created_at ASC", (agent,))
             else:
@@ -295,6 +328,50 @@ class Handler(BaseHTTPRequestHandler):
             out = _rows(cur)
             c.close()
             return self._send(200, {"tasks": out, "count": len(out)})
+
+        if path == "/task-steps":
+            if not self._auth("read"):
+                return
+            role = q.get("role")
+            task_id = q.get("task")
+            status = q.get("status")
+            clauses = ["1=1"]
+            args = []
+            if role:
+                clauses.append("s.assigned_role=?")
+                args.append(role)
+            if task_id:
+                clauses.append("s.task_id=?")
+                args.append(task_id)
+            if status:
+                clauses.append("s.status=?")
+                args.append(status)
+            else:
+                clauses.append("s.status NOT IN ('done','cancelled')")
+            c = _db()
+            out = _rows(c.execute(
+                "SELECT s.*, t.title AS task_title, t.description AS task_description, "
+                "t.project_id, t.urgency_score FROM task_steps s JOIN tasks t ON t.id=s.task_id "
+                f"WHERE {' AND '.join(clauses)} ORDER BY t.urgency_score DESC, s.step_order ASC, s.created_at ASC LIMIT 200",
+                args,
+            ))
+            c.close()
+            return self._send(200, {"steps": out, "count": len(out)})
+
+        if path == "/task-artifacts/latest":
+            if not self._auth("read"):
+                return
+            task_id = q.get("task")
+            artifact_type = q.get("type")
+            if not task_id or not artifact_type:
+                return self._send(400, {"error": "task and type required"})
+            c = _db()
+            row = c.execute(
+                "SELECT * FROM task_artifacts WHERE task_id=? AND artifact_type=? "
+                "ORDER BY version DESC LIMIT 1", (task_id, artifact_type),
+            ).fetchone()
+            c.close()
+            return self._send(200, {"artifact": dict(row) if row else None, "found": bool(row)})
 
         if path == "/memory/recall":
             if not self._auth("read"):
@@ -450,6 +527,171 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         b = self._body()
+
+        if path == "/tasks/create":
+            if not self._auth("write"):
+                return
+            if not b.get("description"):
+                return self._send(400, {"error": "description required"})
+            status = b.get("status", "pending")
+            if status not in TASK_STATUSES:
+                return self._send(400, {"error": "invalid task status", "allowed": sorted(TASK_STATUSES)})
+            task_id = b.get("id") or f"task_{uuid.uuid4().hex[:12]}"
+            c = _db()
+            try:
+                c.execute(
+                    "INSERT INTO tasks(id,parent_task_id,blocked_by_task_id,assigned_agent_id,created_by_agent_id,"
+                    "title,description,status,workspace_path,project_id,priority,due_date,notes,urgency_score,tags,"
+                    "estimated_minutes,created_by_user,created_by_session,source_tool) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (task_id, b.get("parent_task_id"), b.get("blocked_by_task_id"), b.get("assigned_agent_id"),
+                     b.get("created_by_agent_id"), b.get("title"), b["description"], status,
+                     b.get("workspace_path"), b.get("project_id"), str(b.get("priority", "medium")),
+                     b.get("due_date"), b.get("notes", ""), int(b.get("urgency_score", 0)),
+                     b.get("tags", ""), int(b.get("estimated_minutes", 0)), b.get("created_by_user"),
+                     b.get("created_by_session"), b.get("source_tool", "siso-brain")),
+                )
+                c.commit()
+            except sqlite3.IntegrityError as error:
+                c.close()
+                return self._send(409, {"error": str(error), "id": task_id})
+            c.close()
+            return self._send(201, {"ok": True, "id": task_id})
+
+        if path == "/tasks/update":
+            if not self._auth("write"):
+                return
+            task_id = b.get("id")
+            if not task_id:
+                return self._send(400, {"error": "id required"})
+            changes = {key: value for key, value in b.items() if key in TASK_UPDATE_FIELDS}
+            if not changes:
+                return self._send(400, {"error": "no supported changes", "allowed": sorted(TASK_UPDATE_FIELDS)})
+            if "status" in changes and changes["status"] not in TASK_STATUSES:
+                return self._send(400, {"error": "invalid task status", "allowed": sorted(TASK_STATUSES)})
+            assignments = [f"{key}=?" for key in changes]
+            values = list(changes.values())
+            if changes.get("status") == "completed":
+                assignments.append("completed_at=CURRENT_TIMESTAMP")
+            assignments.append("updated_at=CURRENT_TIMESTAMP")
+            c = _db()
+            cur = c.execute(f"UPDATE tasks SET {', '.join(assignments)} WHERE id=?", values + [task_id])
+            c.commit()
+            updated = cur.rowcount
+            c.close()
+            return self._send(200, {"ok": updated == 1, "updated": updated, "id": task_id})
+
+        if path == "/task-steps/add":
+            if not self._auth("write"):
+                return
+            if not b.get("task_id") or not b.get("step_name"):
+                return self._send(400, {"error": "task_id and step_name required"})
+            step_id = b.get("id") or f"step_{uuid.uuid4().hex[:12]}"
+            c = _db()
+            try:
+                c.execute(
+                    "INSERT INTO task_steps(id,task_id,step_name,assigned_role,step_order,input_payload) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (step_id, b["task_id"], b["step_name"], b.get("assigned_role"),
+                     int(b.get("step_order", 0)), _json_text(b.get("input_payload"))),
+                )
+                c.commit()
+            except sqlite3.IntegrityError as error:
+                c.close()
+                return self._send(409, {"error": str(error), "id": step_id})
+            c.close()
+            return self._send(201, {"ok": True, "id": step_id})
+
+        if path == "/task-steps/claim":
+            if not self._auth("write"):
+                return
+            role = b.get("role")
+            if not role:
+                return self._send(400, {"error": "role required"})
+            c = _db()
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT s.*, t.title AS task_title, t.description AS task_description, t.project_id "
+                "FROM task_steps s JOIN tasks t ON t.id=s.task_id "
+                "WHERE s.assigned_role=? AND s.status IN ('pending','retry') "
+                "AND t.status NOT IN ('failed','blocked','completed','cancelled','archived') "
+                "ORDER BY t.urgency_score DESC, s.step_order ASC, s.created_at ASC LIMIT 1",
+                (role,),
+            ).fetchone()
+            if not row:
+                c.commit(); c.close()
+                return self._send(200, {"claimed": False, "step": None})
+            cur = c.execute(
+                "UPDATE task_steps SET status='in_progress', claimed_by=?, claimed_at=CURRENT_TIMESTAMP, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('pending','retry')",
+                (b.get("claimed_by"), row["id"]),
+            )
+            if cur.rowcount != 1:
+                c.rollback(); c.close()
+                return self._send(409, {"error": "step was claimed concurrently"})
+            c.execute("UPDATE tasks SET status='in_progress', started_at=COALESCE(started_at,CURRENT_TIMESTAMP), "
+                      "updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'", (row["task_id"],))
+            c.commit(); c.close()
+            out = dict(row)
+            out.update({"status": "in_progress", "claimed_by": b.get("claimed_by")})
+            return self._send(200, {"claimed": True, "step": out})
+
+        if path == "/task-steps/update":
+            if not self._auth("write"):
+                return
+            step_id = b.get("id")
+            status = b.get("status")
+            if not step_id or status not in STEP_STATUSES:
+                return self._send(400, {"error": "id and valid status required", "allowed": sorted(STEP_STATUSES)})
+            c = _db()
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute("SELECT task_id FROM task_steps WHERE id=?", (step_id,)).fetchone()
+            if not row:
+                c.rollback(); c.close()
+                return self._send(404, {"error": "step not found", "id": step_id})
+            c.execute(
+                "UPDATE task_steps SET status=?, output_payload=?, error_log=?, "
+                "claimed_by=CASE WHEN ? IN ('pending','retry') THEN NULL ELSE claimed_by END, "
+                "claimed_at=CASE WHEN ? IN ('pending','retry') THEN NULL ELSE claimed_at END, "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (status, _json_text(b.get("output_payload")), b.get("error_log"), status, status, step_id),
+            )
+            task_id = row["task_id"]
+            if status == "error":
+                c.execute("UPDATE tasks SET status='failed', updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+            elif status == "done":
+                remaining = c.execute(
+                    "SELECT count(*) FROM task_steps WHERE task_id=? AND status NOT IN ('done','cancelled')", (task_id,),
+                ).fetchone()[0]
+                if remaining == 0:
+                    c.execute("UPDATE tasks SET status='completed', completed_at=CURRENT_TIMESTAMP, "
+                              "updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+            c.commit(); c.close()
+            return self._send(200, {"ok": True, "id": step_id, "status": status, "task_id": task_id})
+
+        if path == "/task-artifacts/write":
+            if not self._auth("write"):
+                return
+            if not b.get("task_id") or not b.get("artifact_type") or b.get("content") is None:
+                return self._send(400, {"error": "task_id, artifact_type, and content required"})
+            artifact_id = b.get("id") or f"artifact_{uuid.uuid4().hex[:12]}"
+            c = _db()
+            c.execute("BEGIN IMMEDIATE")
+            version = c.execute(
+                "SELECT COALESCE(MAX(version),0)+1 FROM task_artifacts WHERE task_id=? AND artifact_type=?",
+                (b["task_id"], b["artifact_type"]),
+            ).fetchone()[0]
+            try:
+                c.execute(
+                    "INSERT INTO task_artifacts(id,task_id,step_id,artifact_type,content,version) VALUES(?,?,?,?,?,?)",
+                    (artifact_id, b["task_id"], b.get("step_id"), b["artifact_type"], b["content"], version),
+                )
+                c.commit()
+            except sqlite3.IntegrityError as error:
+                c.rollback(); c.close()
+                return self._send(409, {"error": str(error), "id": artifact_id})
+            c.close()
+            return self._send(201, {"ok": True, "id": artifact_id, "version": version})
 
         if path == "/memory/write":
             if not self._auth("write"):

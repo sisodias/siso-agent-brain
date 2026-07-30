@@ -12,6 +12,9 @@
     {"source":"sched-runner.py","destination":null,"state":"deferred","candidate_home":"future agent-automation Work","reason":"Scheduling commands is execution policy, not the shared-state service."},
     {"source":"fairshare-shim.py + update-minimax-key.sh","destination":null,"state":"reclassified","candidate_home":"siso-agent-integrations","reason":"Provider routing, concurrency, and key operations are model infrastructure."},
     {"source":"service-probe.py + siso-doctor.py","destination":null,"state":"reclassified","candidate_home":"siso-agent-runtime","reason":"System-wide diagnostics span runtime components and should not be owned by the database service."},
-    {"source":"launchd plists + ship_spine_delta.sh","destination":null,"state":"deferred","candidate_home":"future deployment/operator pack","reason":"Host installation and cross-host transport need an independent operator contract."}
+    {"source":"launchd plists + ship_spine_delta.sh","destination":null,"state":"deferred","candidate_home":"future deployment/operator pack","reason":"Host installation and cross-host transport need an independent operator contract."},
+    {"source":"skills-hub/system/task-manager task lifecycle","destination":"src/server.py + bin/siso-brain + migrations/003_task_workflow.sql","state":"promoted_and_repaired","reason":"Task writes, steps, claims, and versioned artifacts are shared state; direct SQLite, raw SQL, and the claim race were removed."},
+    {"source":"skills-hub/system/pm-tasks","destination":null,"state":"retire_after_adapter","candidate_home":"Skills Hub thin Agent Brain adapter","reason":"The wrapper has no independent outcome and updates a step using a task ID."},
+    {"source":"skills-hub/global/os-database","destination":"LEGACY-TASK-STATE-ASSESSMENT.json","state":"decomposed","reason":"Its task state belongs here; project hierarchy, sessions, tools, playbooks, automation, and telemetry belong to their respective Works."}
   ]
 }

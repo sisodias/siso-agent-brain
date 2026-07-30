@@ -14,8 +14,8 @@ Design:
   - Integrity check before + after (--apply only).
   - Uses explicit column lists — never SELECT * — so extra columns on either side are safe.
   - Single connection per DB, WAL mode, PRAGMA busy_timeout=10000.
-  - Allowlisted durable tables: tasks, memories, timeline_events, cost_events,
-    and challenges. Runtime flags, fleet state, inboxes, questions, divisions,
+  - Allowlisted durable tables: tasks, task_steps, task_artifacts, memories,
+    timeline_events, cost_events, and challenges. Runtime flags, fleet state, inboxes, questions, divisions,
     units, migration records, and unknown extension tables never merge.
 
 stdlib only. Python 3.9+.
@@ -26,7 +26,8 @@ import sqlite3
 import sys
 from typing import Optional
 
-MERGE_TABLES = frozenset({"tasks", "memories", "timeline_events", "cost_events", "challenges"})
+MERGE_ORDER = ("tasks", "task_steps", "task_artifacts", "memories", "timeline_events", "cost_events", "challenges")
+MERGE_TABLES = frozenset(MERGE_ORDER)
 
 # Tables with content-hash dedup (skip source row if hash of dedup_col already in target)
 CONTENT_DEDUP = {
@@ -115,7 +116,7 @@ def merge(
 
     src_tables = set(_tables(src))
     tgt_tables = set(_tables(tgt))
-    shared_tables = sorted((src_tables & tgt_tables) & MERGE_TABLES)
+    shared_tables = [table for table in MERGE_ORDER if table in src_tables and table in tgt_tables]
 
     if verbose:
         source_only = sorted((src_tables - tgt_tables) & MERGE_TABLES)

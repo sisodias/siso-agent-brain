@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0.0",
+  "observed_at": "2026-07-30",
+  "decision": "Agent Brain is the canonical shared task-state service; legacy task folders are decomposed by outcome, not copied as repositories.",
+  "sources_read": [
+    "siso-skills-hub:registry/skills/global/os-database",
+    "siso-skills-hub:registry/skills/system/task-manager",
+    "siso-skills-hub:registry/skills/system/pm-tasks",
+    "siso-agent-brain:migrations",
+    "siso-agent-brain:src/server.py",
+    "siso-agent-brain:bin/siso-brain"
+  ],
+  "capabilities": [
+    {"capability":"task lifecycle","canonical_home":"siso-agent-brain","state":"implemented","contract":"authorized task create, read, filtered list, and allowlisted update"},
+    {"capability":"role queue and task steps","canonical_home":"siso-agent-brain","state":"implemented","contract":"single-writer API with BEGIN IMMEDIATE claim; one step cannot be claimed twice"},
+    {"capability":"versioned task artifacts","canonical_home":"siso-agent-brain","state":"implemented","contract":"immutable versions per task and artifact type"},
+    {"capability":"task memory","canonical_home":"siso-agent-brain","state":"already_implemented","contract":"memory write and confidence/recency recall"},
+    {"capability":"execution and activity records","canonical_home":"siso-agent-brain","state":"already_implemented","contract":"typed timeline events replace a second execution-log table"},
+    {"capability":"agent session lifecycle","canonical_home":"siso-agent-runtime","state":"reclassified","contract":"Runtime owns session execution; Brain receives shared lifecycle facts only"},
+    {"capability":"project, mission, and goal hierarchy","canonical_home":"siso-project-os","state":"reclassified","contract":"Project OS owns project planning structure; Brain tasks retain a project locator"},
+    {"capability":"tool catalog and skill discovery","canonical_home":"siso-skills-hub","state":"reclassified","contract":"Skills Hub owns capability discovery; Brain may store governed unit outcomes"},
+    {"capability":"tool execution permissions","canonical_home":"siso-agent-runtime","state":"reclassified","contract":"Runtime enforces execution authority; Brain stores shared control decisions, not credentials"},
+    {"capability":"task templates and composed pipelines","canonical_home":"future-agent-playbooks","state":"reclassified","contract":"Reusable multi-step operating procedures version with playbooks"},
+    {"capability":"scheduled automations","canonical_home":"future-agent-automation","state":"deferred","contract":"Timing and execution authority are outside a shared-state database"},
+    {"capability":"custom fields and generic task relationships","canonical_home":"unverified","state":"deferred","contract":"No current consumer evidence justifies schema promotion"},
+    {"capability":"raw SQL query","canonical_home":null,"state":"retired","contract":"No public adapter receives arbitrary SQL"},
+    {"capability":"machine-local database paths and committed runtime state","canonical_home":null,"state":"retired","contract":"Configuration is explicit; databases and state remain outside source"}
+  ],
+  "legacy_units": [
+    {"unit":"os-database","decision":"decompose_then_retire","reason":"It mixes task state, project planning, runtime sessions, automation, tools, telemetry, and machine state in one skill folder."},
+    {"unit":"task-manager","decision":"replace_with_brain_adapter","reason":"Its useful task/step/artifact behavior now has a tested service contract; direct SQLite and raw SELECT do not survive."},
+    {"unit":"pm-tasks","decision":"retire_after_adapter","reason":"It is a broken wrapper over task-manager, not an independently releasable capability."}
+  ],
+  "receipts": [
+    {"kind":"test","command":"npm test","proves":"empty-database migrations, API auth, task lifecycle, concurrent single-claim behavior, artifact versioning, outbox replay, durable merge, install, and state-preserving uninstall"},
+    {"kind":"migration","reference":"migrations/003_task_workflow.sql","proves":"task steps and artifacts are additive; prior immutable migrations remain unchanged"},
+    {"kind":"classification","reference":"docs/TASK-STATE-MIGRATION.html","proves":"every legacy capability has a named home, retirement decision, or explicit unverified state"}
+  ]
+}
