@@ -22,8 +22,8 @@ REQUIRED = [
     "README.md", "LICENSE", "AGENTS.md", "PROVENANCE.md", "MIGRATION-MAP.json", "LEGACY-TASK-STATE-ASSESSMENT.json",
     "src/server.py", "bin/siso-brain", "bin/siso-brain-server",
     "migrations/001_core.sql", "migrations/002_coordination.sql", "migrations/003_task_workflow.sql",
-    "scripts/migrate.py", "tools/spine_merge.py", "docs/ARCHITECTURE.html", "docs/TASK-STATE-MIGRATION.html",
-    "reports/task-state-migration-checkpoint.html", "reports/implementation-runs.jsonl",
+    "scripts/migrate.py", "tools/spine_merge.py", "tools/import_legacy_tasks.py", "docs/ARCHITECTURE.html", "docs/TASK-STATE-MIGRATION.html",
+    "reports/task-state-migration-checkpoint.html", "reports/legacy-import-checkpoint.html", "reports/implementation-runs.jsonl",
     "install.sh", "uninstall.sh",
 ]
 TEXT_SUFFIXES = {".md", ".html", ".json", ".jsonl", ".py", ".sh", ".sql", ""}
@@ -245,6 +245,90 @@ def check_merge(folder: Path) -> None:
     assert "inserted=0" in again
 
 
+def check_legacy_import(folder: Path) -> None:
+    folder.mkdir(parents=True)
+    manager_source = folder / "task-manager.db"
+    manager_target = folder / "task-manager-brain.db"
+    run(["scripts/migrate.py", "--database", str(manager_target)])
+    with sqlite3.connect(manager_source) as connection:
+        connection.executescript("""
+        CREATE TABLE tasks(id TEXT PRIMARY KEY,project_id TEXT,pipeline_type TEXT,title TEXT,category TEXT,
+          created_by TEXT,assigned_to TEXT,description TEXT,metadata TEXT,status TEXT,priority INTEGER,
+          created_at TEXT,updated_at TEXT);
+        CREATE TABLE task_steps(id TEXT PRIMARY KEY,task_id TEXT,step_name TEXT,status TEXT,
+          assigned_agent_role TEXT,step_order INTEGER,input_payload TEXT,output_payload TEXT,error_log TEXT);
+        CREATE TABLE artifacts(id TEXT PRIMARY KEY,task_id TEXT,artifact_type TEXT,content TEXT,version INTEGER,
+          created_by_step_id TEXT,created_at TEXT);
+        CREATE TABLE memories(id TEXT PRIMARY KEY,task_id TEXT,session_id TEXT,type TEXT,content TEXT,created_at TEXT);
+        CREATE TABLE sessions(id TEXT PRIMARY KEY,project_id TEXT,role TEXT,context_data TEXT);
+        """)
+        connection.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("legacy-task", "library", "execution", "Legacy task", "feature", "pm", "builder",
+             "Import me", '{"source":"fixture"}', "pending", 8, "2026-07-30", "2026-07-30"))
+        connection.execute("INSERT INTO task_steps VALUES(?,?,?,?,?,?,?,?,?)",
+            ("legacy-step", "legacy-task", "implement", "pending", "builder", 1, '{"input":1}', None, None))
+        connection.execute("INSERT INTO artifacts VALUES(?,?,?,?,?,?,?)",
+            ("legacy-artifact", "legacy-task", "report", "fixture receipt", 1, "legacy-step", "2026-07-30"))
+        connection.execute("INSERT INTO memories VALUES(?,?,?,?,?,?)",
+            ("legacy-memory", "legacy-task", "session-private", "learning", "fixture memory", "2026-07-30"))
+        connection.execute("INSERT INTO sessions VALUES(?,?,?,?)", ("legacy-session", "library", "builder", "private"))
+        connection.commit()
+
+    dry = json.loads(run(["tools/import_legacy_tasks.py", "--source", str(manager_source), "--target", str(manager_target)]).stdout)
+    assert dry["mode"] == "dry-run" and dry["profile"] == "task-manager"
+    assert dry["capabilities"]["tasks"]["written_or_planned"] == 1
+    assert dry["capabilities"]["memories"]["seen"] == 0
+    assert any(item["capability"] == "memory_content" for item in dry["excluded"])
+    with sqlite3.connect(manager_target) as connection:
+        assert connection.execute("SELECT count(*) FROM tasks").fetchone()[0] == 0
+
+    applied = json.loads(run(["tools/import_legacy_tasks.py", "--source", str(manager_source), "--target", str(manager_target), "--apply", "--include-memory"]).stdout)
+    assert applied["capabilities"]["task_steps"]["written_or_planned"] == 1
+    assert any(item["capability"] == "sessions" for item in applied["excluded"])
+    with sqlite3.connect(manager_target) as connection:
+        task = connection.execute("SELECT assigned_agent_id,urgency_score,source_tool FROM tasks WHERE id='legacy-task'").fetchone()
+        assert task == ("builder", 80, "legacy-task-manager:execution")
+        assert connection.execute("SELECT count(*) FROM task_steps").fetchone()[0] == 1
+        assert connection.execute("SELECT content FROM task_artifacts").fetchone()[0] == "fixture receipt"
+        assert connection.execute("SELECT content FROM memories").fetchone()[0] == "fixture memory"
+        assert "sessions" not in {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    again = json.loads(run(["tools/import_legacy_tasks.py", "--source", str(manager_source), "--target", str(manager_target), "--apply", "--include-memory"]).stdout)
+    assert again["capabilities"]["tasks"]["existing"] == 1
+    assert again["capabilities"]["task_artifacts"]["existing"] == 1
+
+    os_source = folder / "os-database.db"
+    os_target = folder / "os-brain.db"
+    run(["scripts/migrate.py", "--database", str(os_target)])
+    with sqlite3.connect(os_source) as connection:
+        connection.executescript("""
+        CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT,description TEXT,status TEXT,assigned_agent_id TEXT,
+          project_id TEXT,priority INTEGER,urgency_score INTEGER,created_at TEXT,updated_at TEXT);
+        CREATE TABLE memories(id TEXT PRIMARY KEY,task_id TEXT,agent_id TEXT,type TEXT,content TEXT,created_at TEXT);
+        CREATE TABLE timeline_events(id TEXT PRIMARY KEY,task_id TEXT,agent_id TEXT,event_type TEXT,message TEXT,metadata TEXT,timestamp TEXT);
+        CREATE TABLE artifacts(id TEXT PRIMARY KEY,task_id TEXT,artifact_type TEXT,file_path TEXT,created_at TEXT);
+        """)
+        connection.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("os-task", "OS task", "Import shared truth", "done", "agent-1", "library", 4, 90, "2026-07-30", "2026-07-30"))
+        connection.execute("INSERT INTO memories VALUES(?,?,?,?,?,?)",
+            ("os-memory", "os-task", "agent-1", "fact", "OS memory", "2026-07-30"))
+        connection.execute("INSERT INTO timeline_events VALUES(?,?,?,?,?,?,?)",
+            ("os-event", "os-task", "agent-1", "ACTION", "worked", None, "2026-07-30"))
+        connection.execute("INSERT INTO timeline_events VALUES(?,?,?,?,?,?,?)",
+            ("bad-event", "os-task", "agent-1", "UNREVIEWED", "skip", None, "2026-07-30"))
+        connection.execute("INSERT INTO artifacts VALUES(?,?,?,?,?)",
+            ("path-artifact", "os-task", "report", "/private/machine/path", "2026-07-30"))
+        connection.commit()
+    os_report = json.loads(run(["tools/import_legacy_tasks.py", "--source", str(os_source), "--target", str(os_target), "--apply", "--include-memory", "--include-timeline"]).stdout)
+    assert os_report["profile"] == "os-database"
+    assert os_report["capabilities"]["timeline_events"]["written_or_planned"] == 1
+    assert os_report["capabilities"]["timeline_events"]["invalid"] == 1
+    assert any(item["capability"] == "file_path_artifacts" for item in os_report["excluded"])
+    with sqlite3.connect(os_target) as connection:
+        assert connection.execute("SELECT status,source_tool FROM tasks WHERE id='os-task'").fetchone() == ("completed", "legacy-os-database")
+        assert connection.execute("SELECT count(*) FROM task_artifacts").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM timeline_events").fetchone()[0] == 1
+
+
 def check_install(folder: Path) -> None:
     install_root = folder / "application"
     bin_root = folder / "bin"
@@ -269,8 +353,9 @@ def main() -> None:
         folder = Path(value)
         check_live_contract(folder / "live")
         check_merge(folder / "merge")
+        check_legacy_import(folder / "legacy-import")
         check_install(folder / "install")
-    print("AGENT_BRAIN_CHECK_OK (publication, schema, task workflow, atomic claim, artifacts, live API, auth, outbox, merge, install, state-preserving uninstall)")
+    print("AGENT_BRAIN_CHECK_OK (publication, schema, task workflow, atomic claim, artifacts, live API, auth, outbox, durable merge, dry-run legacy import, install, state-preserving uninstall)")
 
 
 if __name__ == "__main__":

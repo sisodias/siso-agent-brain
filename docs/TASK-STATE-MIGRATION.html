@@ -49,8 +49,8 @@
   </tbody></table>
 
   <h2>Receipts and reversibility</h2>
-  <p><code>migrations/003_task_workflow.sql</code> is additive; older migrations remain immutable. <code>npm test</code> creates an isolated database, races two claimants against one step, verifies exactly one claim wins, checks task completion and artifact versioning, replays the offline outbox, merges durable task state, and confirms uninstall preserves data. The machine-readable classification is <code>LEGACY-TASK-STATE-ASSESSMENT.json</code>.</p>
-  <p class="muted">If future evidence shows task workflow deserves a separate service, the stable capability can move behind a new locator. Consumers should depend on the contract, not this repository path.</p>
+  <p><code>migrations/003_task_workflow.sql</code> is additive; older migrations remain immutable. <code>npm test</code> creates isolated databases, races two claimants against one step, verifies exactly one claim wins, checks task completion and artifact versioning, replays the offline outbox, merges durable state, and runs dry-run/apply/idempotent imports for both reviewed legacy layouts. Private path artifacts never copy; memory and timeline content require explicit opt-in flags. Uninstall still preserves data. The machine-readable classification is <code>LEGACY-TASK-STATE-ASSESSMENT.json</code>.</p>
+  <p class="muted">Fixture-backed import does not prove a real local database is clean or complete. Run the importer without <code>--apply</code>, review counts and exclusions, and keep the Brain service stopped for any apply. If future evidence shows task workflow deserves a separate service, the stable capability can move behind a new locator.</p>
 
   <div class="footer">The Great Library of SISO — Built by the SISO Open Source Foundation · Funded by SISO Agency.</div>
 </main></body></html>

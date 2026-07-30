@@ -9,5 +9,6 @@ This repository owns shared state, its API/client contract, schema migrations, a
 - The dashboard stays disabled by default; the server stays loopback-bound by default.
 - Applied migration contents are immutable. Add a new numbered migration instead of editing one.
 - Data merge remains dry-run by default and explicit-table allowlisted.
+- Legacy import remains dry-run by default; memory and timeline content are opt-in and private file paths never copy.
 - Uninstall never deletes runtime state.
 - Run `npm test` before publication.

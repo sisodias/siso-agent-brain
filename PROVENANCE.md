@@ -25,4 +25,4 @@ Compared and decomposed after direct review of the Skills Hub task/state folders
 - `pm-tasks` → scheduled for retirement after the thin Agent Brain adapter replaces it;
 - `os-database` → capability-by-capability homes recorded in `LEGACY-TASK-STATE-ASSESSMENT.json`; the mixed folder is not promoted as a repository.
 
-No runtime database or private machine state was copied. The legacy source remains preserved until compatibility and data-migration receipts are complete.
+No runtime database or private machine state was copied. `tools/import_legacy_tasks.py` now proves dry-run, apply, and idempotent imports against isolated Task Manager and OS Database fixtures while excluding mixed-system tables and private file-path artifacts. Memory and timeline contents are opt-in. The legacy source remains preserved until a real local database has passed dry-run review and remaining consumers are inventoried.

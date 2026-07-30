@@ -36,6 +36,19 @@ The human dashboard is disabled by default because it renders coordination data.
 - Unreachable writes enter a configurable local outbox and can be replayed with `siso-brain drain`.
 - Migrations are immutable and digest-checked.
 - Database union is dry-run by default and allowlists only durable tables.
+- Legacy task-state import is dry-run by default, profile-detected, field-allowlisted, and requires explicit flags for memory or timeline content.
 - Uninstall removes package code and executable links, never the database, tokens, or outbox.
+
+## Migrate reviewed legacy task state
+
+Stop the Brain service, migrate an empty target database, and dry-run first:
+
+```bash
+scripts/migrate.py --database ./brain-target.db
+tools/import_legacy_tasks.py --source ./legacy.db --target ./brain-target.db
+tools/import_legacy_tasks.py --source ./legacy.db --target ./brain-target.db --apply
+```
+
+The importer recognizes the reviewed OS Database and Task Manager layouts. It imports task truth plus compatible steps/artifacts; it never imports raw SQL, sessions, tool permissions, project hierarchy, automations, or private file-path artifacts. Memory and timeline content require `--include-memory` and `--include-timeline` because those records may contain sensitive material.
 
 Read [`docs/ARCHITECTURE.html`](docs/ARCHITECTURE.html), [`docs/TASK-STATE-MIGRATION.html`](docs/TASK-STATE-MIGRATION.html), [`MIGRATION-MAP.json`](MIGRATION-MAP.json), and [`LEGACY-TASK-STATE-ASSESSMENT.json`](LEGACY-TASK-STATE-ASSESSMENT.json). Run `npm test` before publishing.

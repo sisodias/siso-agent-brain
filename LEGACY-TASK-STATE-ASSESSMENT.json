@@ -14,6 +14,7 @@
     {"capability":"task lifecycle","canonical_home":"siso-agent-brain","state":"implemented","contract":"authorized task create, read, filtered list, and allowlisted update"},
     {"capability":"role queue and task steps","canonical_home":"siso-agent-brain","state":"implemented","contract":"single-writer API with BEGIN IMMEDIATE claim; one step cannot be claimed twice"},
     {"capability":"versioned task artifacts","canonical_home":"siso-agent-brain","state":"implemented","contract":"immutable versions per task and artifact type"},
+    {"capability":"legacy task-state portability","canonical_home":"siso-agent-brain","state":"fixture_verified","contract":"dry-run-first, profile-detected, field-allowlisted import; memory and timeline are explicit opt-ins"},
     {"capability":"task memory","canonical_home":"siso-agent-brain","state":"already_implemented","contract":"memory write and confidence/recency recall"},
     {"capability":"execution and activity records","canonical_home":"siso-agent-brain","state":"already_implemented","contract":"typed timeline events replace a second execution-log table"},
     {"capability":"agent session lifecycle","canonical_home":"siso-agent-runtime","state":"reclassified","contract":"Runtime owns session execution; Brain receives shared lifecycle facts only"},
@@ -27,13 +28,14 @@
     {"capability":"machine-local database paths and committed runtime state","canonical_home":null,"state":"retired","contract":"Configuration is explicit; databases and state remain outside source"}
   ],
   "legacy_units": [
-    {"unit":"os-database","decision":"decompose_then_retire","reason":"It mixes task state, project planning, runtime sessions, automation, tools, telemetry, and machine state in one skill folder."},
+    {"unit":"os-database","decision":"decompose_then_retire_after_real_dry_run","reason":"It mixes task state, project planning, runtime sessions, automation, tools, telemetry, and machine state; task portability now passes fixtures but a real local database must be reviewed before source retirement."},
     {"unit":"task-manager","decision":"replace_with_brain_adapter","reason":"Its useful task/step/artifact behavior now has a tested service contract; direct SQLite and raw SELECT do not survive."},
     {"unit":"pm-tasks","decision":"retire_after_adapter","reason":"It is a broken wrapper over task-manager, not an independently releasable capability."}
   ],
   "receipts": [
-    {"kind":"test","command":"npm test","proves":"empty-database migrations, API auth, task lifecycle, concurrent single-claim behavior, artifact versioning, outbox replay, durable merge, install, and state-preserving uninstall"},
+    {"kind":"test","command":"npm test","proves":"empty-database migrations, API auth, task lifecycle, concurrent single-claim behavior, artifact versioning, outbox replay, durable merge, dry-run/apply/idempotent legacy imports, privacy opt-ins, install, and state-preserving uninstall"},
     {"kind":"migration","reference":"migrations/003_task_workflow.sql","proves":"task steps and artifacts are additive; prior immutable migrations remain unchanged"},
-    {"kind":"classification","reference":"docs/TASK-STATE-MIGRATION.html","proves":"every legacy capability has a named home, retirement decision, or explicit unverified state"}
+    {"kind":"classification","reference":"docs/TASK-STATE-MIGRATION.html","proves":"every legacy capability has a named home, retirement decision, or explicit unverified state"},
+    {"kind":"migration","reference":"tools/import_legacy_tasks.py","proves":"reviewed Task Manager and OS Database layouts can move allowlisted durable state without importing private paths or mixed-system tables"}
   ]
 }
