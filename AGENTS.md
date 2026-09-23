@@ -1,5 +1,7 @@
 # Agent guide
 
+**In one line:** Shared state service for the agent stack, owning task lifecycle, artifacts, memories, timeline, fleet heartbeats, costs and human questions. District: `SISO_Agents` (`~/SISO_Workspace/SISO_Agents/siso-agent-brain`).
+
 This repository owns shared state, its API/client contract, schema migrations, and conservative data portability.
 
 - Keep Agent Zero identity and coordination policy outside this repository.
