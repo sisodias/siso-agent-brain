@@ -73,6 +73,8 @@ def output(result: tuple[int | None, object]) -> None:
     print(json.dumps(response, indent=2, sort_keys=True))
     if code is not None and code >= 400:
         raise SystemExit(1)
+    if code is None and isinstance(response, dict) and response.get("unreachable"):
+        raise SystemExit(69)  # EX_UNAVAILABLE: never report success when the brain did not answer
 
 
 def query(path: str, values: dict[str, object | None]) -> str:
