@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""
+siso-brain — one-command client for the JARVIS brain-API.
+
+Any agent on any machine (Mini, MacBook, VPS) talks to the ONE authoritative
+brain through this. It never touches the DB file — it calls braind.
+
+Resolution (no flags needed in the common case):
+  URL  : $SISO_BRAIN_URL  else if on the Mini -> http://127.0.0.1:8830
+                          else                -> https://shaans-mac-mini.tail100d11.ts.net:8831
+  TOKEN: $SISO_BRAIN_TOKEN  else first of ~/.siso/brain-tokens/{spawn,write,read}.token that exists
+         (local Mini has the files; remote machines set SISO_BRAIN_TOKEN to the right-tier token)
+
+Degraded write: if the brain is unreachable, writes append to
+  ~/.siso/brain-outbox.ndjson  and `siso-brain drain` flushes them on reconnect.
+
+Examples:
+  siso-brain health
+  siso-brain fleet
+  siso-brain tasks --agent agent-zero
+  siso-brain memory-write --content "Mini is the brain host" --tier semantic_fact --agent agent-zero
+  siso-brain memory-recall --q "brain host"
+  siso-brain timeline --agent agent-zero --type THOUGHT --message "thinking..."
+  siso-brain heartbeat --id macbook-main --name "MacBook session" --machine macbook --cwd "$PWD"
+  siso-brain cost --cli claude --model opus --tokens-in 1200 --tokens-out 800 --usd 0.03
+  siso-brain drain
+"""
+import argparse, json, os, socket, ssl, sys, urllib.request, urllib.error, urllib.parse
+
+HOME = os.path.expanduser("~")
+OUTBOX = os.path.join(HOME, ".siso", "brain-outbox.ndjson")
+MINI_HOSTNAMES = ("shaans-mac-mini", "Shaans-Mac-mini")
+
+
+def _on_mini():
+    h = socket.gethostname()
+    return any(h.lower().startswith(m.lower()) for m in MINI_HOSTNAMES)
+
+
+def _url():
+    u = os.environ.get("SISO_BRAIN_URL")
+    if u:
+        return u.rstrip("/")
+    return "http://127.0.0.1:8830" if _on_mini() else "https://shaans-mac-mini.tail100d11.ts.net:8831"
+
+
+def _token():
+    t = os.environ.get("SISO_BRAIN_TOKEN")
+    if t:
+        return t.strip()
+    for tier in ("spawn", "write", "read"):
+        p = os.path.join(HOME, ".siso", "brain-tokens", f"{tier}.token")
+        if os.path.exists(p):
+            with open(p) as f:
+                return f.read().strip()
+    return ""
+
+
+def _req(method, path, body=None, want_auth=True, timeout=10):
+    url = _url() + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if want_auth:
+        req.add_header("Authorization", f"Bearer {_token()}")
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as r:
+            return r.status, json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode() or "{}")
+    except Exception as e:
+        return None, {"error": str(e), "unreachable": True}
+
+
+def _outbox_append(path, body):
+    os.makedirs(os.path.dirname(OUTBOX), exist_ok=True)
+    with open(OUTBOX, "a") as f:
+        f.write(json.dumps({"path": path, "body": body}) + "\n")
+
+
+def _write(path, body):
+    """POST a write; if the brain is unreachable, queue to outbox (degraded mode)."""
+    code, resp = _req("POST", path, body)
+    if code is None and resp.get("unreachable"):
+        _outbox_append(path, body)
+        return None, {"queued": True, "outbox": OUTBOX, "note": "brain unreachable — queued; run `siso-brain drain`"}
+    return code, resp
+
+
+def _out(code, resp):
+    print(json.dumps(resp, indent=2))
+    # exit nonzero on real HTTP errors so scripts/agents can detect failure
+    if code is not None and code >= 400:
+        sys.exit(1)
+
+
+def main():
+    p = argparse.ArgumentParser(prog="siso-brain")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("health")
+    sub.add_parser("fleet")
+    sub.add_parser("drain")
+    sub.add_parser("halt-status")
+    sub.add_parser("questions")
+
+    pn = sub.add_parser("notify")
+    pn.add_argument("--summary", required=True); pn.add_argument("--body")
+    pn.add_argument("--urgency", default="normal"); pn.add_argument("--from-agent")
+    sub.add_parser("notifications").add_argument("--unseen", action="store_true")
+
+    pa = sub.add_parser("ask")
+    pa.add_argument("--q", required=True)
+    pa.add_argument("--cwd")
+    pa.add_argument("--k", type=int, default=8)
+    pa.add_argument("--dim")
+
+    pan = sub.add_parser("answer")
+    pan.add_argument("--id", required=True); pan.add_argument("--answer", required=True)
+
+    phalt = sub.add_parser("halt")
+    phalt.add_argument("--scope", default="global"); phalt.add_argument("--reason"); phalt.add_argument("--resume", action="store_true")
+
+    pfa = sub.add_parser("farm-add")
+    pfa.add_argument("--source", required=True); pfa.add_argument("--name", required=True)
+    pfa.add_argument("--url"); pfa.add_argument("--summary"); pfa.add_argument("--signal"); pfa.add_argument("--fit", type=float, default=0.0)
+    pfc = sub.add_parser("farm-candidates"); pfc.add_argument("--verdict")
+    pfd = sub.add_parser("farm-decide"); pfd.add_argument("--id", required=True); pfd.add_argument("--verdict", required=True)
+
+    sub.add_parser("divisions")
+    sub.add_parser("roundup")
+    pdel = sub.add_parser("delegate"); pdel.add_argument("--division", required=True); pdel.add_argument("--intent", required=True); pdel.add_argument("--from-agent", default="agent-zero")
+    pib = sub.add_parser("inbox"); pib.add_argument("--division", required=True)
+    pir = sub.add_parser("inbox-reply"); pir.add_argument("--division", required=True); pir.add_argument("--body", required=True); pir.add_argument("--kind", default="status"); pir.add_argument("--ack-intent")
+    pg = sub.add_parser("gate"); pg.add_argument("--tier", default="T1"); pg.add_argument("--division")
+    pdig = sub.add_parser("digest"); pdig.add_argument("--since", default="")
+    pdr = sub.add_parser("division-register")
+    pdr.add_argument("--id", required=True); pdr.add_argument("--name", required=True)
+    pdr.add_argument("--repo"); pdr.add_argument("--orchestrator"); pdr.add_argument("--status", default="active")
+
+    pt = sub.add_parser("tasks"); pt.add_argument("--agent")
+
+    pm = sub.add_parser("memory-write")
+    pm.add_argument("--content", required=True); pm.add_argument("--agent")
+    pm.add_argument("--tier", default="episodic"); pm.add_argument("--type", default="semantic_fact")
+    pm.add_argument("--confidence", type=float, default=0.6); pm.add_argument("--task")
+
+    pr = sub.add_parser("memory-recall")
+    pr.add_argument("--q", default=""); pr.add_argument("--tier"); pr.add_argument("--agent")
+
+    pe = sub.add_parser("timeline")
+    pe.add_argument("--agent", required=True); pe.add_argument("--type", required=True)
+    pe.add_argument("--message"); pe.add_argument("--task")
+
+    ph = sub.add_parser("heartbeat")
+    ph.add_argument("--id", required=True); ph.add_argument("--name"); ph.add_argument("--machine")
+    ph.add_argument("--cwd", default=os.getcwd()); ph.add_argument("--status", default="running")
+
+    pc = sub.add_parser("cost")
+    pc.add_argument("--agent"); pc.add_argument("--run"); pc.add_argument("--cli"); pc.add_argument("--model")
+    pc.add_argument("--tokens-in", type=int, default=0); pc.add_argument("--tokens-out", type=int, default=0)
+    pc.add_argument("--usd", type=float, default=0.0)
+
+    a = p.parse_args()
+
+    if a.cmd == "health":
+        _out(*_req("GET", "/health", want_auth=False))
+    elif a.cmd == "fleet":
+        _out(*_req("GET", "/fleet"))
+    elif a.cmd == "tasks":
+        q = "?" + urllib.parse.urlencode({"agent": a.agent}) if a.agent else ""
+        _out(*_req("GET", "/tasks" + q))
+    elif a.cmd == "memory-write":
+        _out(*_write("/memory/write", {"content": a.content, "agent_id": a.agent, "tier": a.tier,
+                                       "type": a.type, "confidence": a.confidence, "task_id": a.task}))
+    elif a.cmd == "memory-recall":
+        params = {"q": a.q}
+        if a.tier: params["tier"] = a.tier
+        if a.agent: params["agent"] = a.agent
+        _out(*_req("GET", "/memory/recall?" + urllib.parse.urlencode(params)))
+    elif a.cmd == "timeline":
+        _out(*_write("/timeline/append", {"agent_id": a.agent, "event_type": a.type,
+                                          "message": a.message, "task_id": a.task}))
+    elif a.cmd == "heartbeat":
+        _out(*_write("/fleet/heartbeat", {"id": a.id, "name": a.name or a.id, "machine": a.machine,
+                                          "cwd": a.cwd, "status": a.status}))
+    elif a.cmd == "cost":
+        _out(*_write("/cost/add", {"agent_id": a.agent, "run_id": a.run, "cli": a.cli, "model": a.model,
+                                   "tokens_in": a.tokens_in, "tokens_out": a.tokens_out, "est_usd": a.usd}))
+    elif a.cmd == "halt-status":
+        _out(*_req("GET", "/halt/status"))
+    elif a.cmd == "questions":
+        _out(*_req("GET", "/questions"))
+    elif a.cmd == "notifications":
+        _out(*_req("GET", "/notifications" + ("?unseen=1" if getattr(a, "unseen", False) else "")))
+    elif a.cmd == "notify":
+        _out(*_write("/notify", {"summary": a.summary, "body": a.body, "urgency": a.urgency, "from_agent": a.from_agent}))
+    elif a.cmd == "ask":
+        params = {"q": a.q, "k": a.k}
+        if a.cwd:
+            params["cwd"] = a.cwd
+        if a.dim:
+            params["dim"] = a.dim
+        code, resp = _req("GET", "/brain/ask?" + urllib.parse.urlencode(params))
+        if code is not None and code >= 400:
+            _out(code, resp)
+            return
+        if not isinstance(resp, list):
+            _out(code, resp)
+            return
+        if not resp:
+            print("no results")
+            return
+        for r in resp:
+            text = (r.get("title") or r.get("body") or "").replace("\n", " ").strip()
+            if len(text) > 140:
+                text = text[:137] + "..."
+            print(f"{r.get('dim')} | {text} | ×{r.get('recurrence', 0)} | {r.get('domain')}")
+    elif a.cmd == "answer":
+        _out(*_write("/answer", {"id": a.id, "answer": a.answer}))
+    elif a.cmd == "halt":
+        _out(*_write("/halt", {"scope": a.scope, "reason": a.reason, "resume": a.resume}))
+    elif a.cmd == "farm-add":
+        _out(*_write("/farm/add", {"source": a.source, "name": a.name, "url": a.url,
+                                   "summary": a.summary, "signal": a.signal, "fit_score": a.fit}))
+    elif a.cmd == "farm-candidates":
+        _out(*_req("GET", "/farm/candidates" + (f"?verdict={a.verdict}" if a.verdict else "")))
+    elif a.cmd == "farm-decide":
+        _out(*_write("/farm/decide", {"id": a.id, "verdict": a.verdict}))
+    elif a.cmd == "divisions":
+        _out(*_req("GET", "/divisions"))
+    elif a.cmd == "roundup":
+        _out(*_req("GET", "/roundup"))
+    elif a.cmd == "delegate":
+        _out(*_write("/delegate", {"division": a.division, "intent": a.intent, "from_agent": a.from_agent}))
+    elif a.cmd == "inbox":
+        _out(*_req("GET", "/inbox?" + urllib.parse.urlencode({"division": a.division})))
+    elif a.cmd == "inbox-reply":
+        _out(*_write("/inbox/reply", {"division": a.division, "body": a.body, "kind": a.kind, "ack_intent": a.ack_intent}))
+    elif a.cmd == "gate":
+        qp = {"tier": a.tier}
+        if a.division: qp["division"] = a.division
+        _out(*_req("GET", "/gate?" + urllib.parse.urlencode(qp)))
+    elif a.cmd == "digest":
+        _out(*_req("GET", "/digest" + (f"?since={urllib.parse.quote(a.since)}" if a.since else "")))
+    elif a.cmd == "division-register":
+        _out(*_write("/divisions/register", {"id": a.id, "name": a.name, "repo_path": a.repo,
+                                             "orchestrator": a.orchestrator, "status": a.status}))
+    elif a.cmd == "drain":
+        if not os.path.exists(OUTBOX):
+            print(json.dumps({"drained": 0, "note": "no outbox"})); return
+        lines = [l for l in open(OUTBOX).read().splitlines() if l.strip()]
+        remaining, ok = [], 0
+        for l in lines:
+            item = json.loads(l)
+            code, resp = _req("POST", item["path"], item["body"])
+            if code is not None and code < 400:
+                ok += 1
+            else:
+                remaining.append(l)  # keep failures for next drain
+        with open(OUTBOX, "w") as f:
+            f.write(("\n".join(remaining) + "\n") if remaining else "")
+        print(json.dumps({"drained": ok, "remaining": len(remaining)}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

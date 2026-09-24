@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.siso.braind</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/shaansisodia/SISO_Workspace/SISO_Agents/siso-agent-brain/extensions/braind/braind.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SISO_DB</key><string>/Users/shaansisodia/SISO_Workspace/.SystemDB/sisosystem.db</string>
+    <key>SISO_BRAIN_PORT</key><string>8830</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/siso-braind.log</string>
+  <key>StandardErrorPath</key><string>/tmp/siso-braind.err</string>
+</dict></plist>

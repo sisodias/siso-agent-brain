@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.siso.spine-delta-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/shaansisodia/SISO_Workspace/SISO_Agents/siso-agent-brain/extensions/braind/ship_spine_delta.sh</string>
+  </array>
+
+  <!-- Run every 2 hours at :37 past the hour -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>1</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>3</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>5</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>9</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>11</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>13</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>15</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>21</integer></dict>
+    <dict><key>Minute</key><integer>37</integer><key>Hour</key><integer>23</integer></dict>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/shaansisodia</string>
+    <key>MERGE_SCRIPT</key>
+    <string>/Users/shaansisodia/SISO_Workspace/SISO_Agents/siso-agent-brain/extensions/braind/spine_merge.py</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/siso-spine-delta-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/siso-spine-delta-sync.err</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

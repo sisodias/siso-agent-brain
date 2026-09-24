@@ -6,3 +6,7 @@ __pycache__/
 *.token
 outbox.ndjson
 runtime/
+
+# extensions/braind (moved from SISO_Agent_Base 2026-09-24): session files are not source
+extensions/braind/.claude/
+__pycache__/

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.siso.sched-runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/shaansisodia/SISO_Workspace/SISO_Agents/siso-agent-brain/extensions/braind/sched-runner.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>SISO_DB</key><string>/Users/shaansisodia/SISO_Workspace/.SystemDB/sisosystem.db</string></dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/tmp/siso-sched-runner.log</string>
+  <key>StandardErrorPath</key><string>/tmp/siso-sched-runner.err</string>
+</dict></plist>
