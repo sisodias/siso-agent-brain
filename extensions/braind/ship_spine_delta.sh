@@ -56,6 +56,13 @@ echo "  laptop: $LAPTOP_DB"
 echo "  mini:   ${MINI_USER}@${MINI_HOST}:${MINI_DB}"
 echo "  apply:  ${APPLY_FLAG:-'(dry-run)'}"
 
+# ── Step 0: is the Mini there? ───────────────────────────────────────────────
+# The snapshot is ~800 MB; making it every two hours while the Mini is offline only fills /tmp. Skip cleanly.
+if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "${MINI_USER}@${MINI_HOST}" true 2>/dev/null; then
+    echo "[ship_spine_delta] Mini unreachable (${MINI_HOST}); nothing shipped, try next run"
+    exit 0
+fi
+
 # ── Step 1: VACUUM INTO snapshot (clean, WAL-free) ─────────────────────────
 echo "[ship_spine_delta] Step 1: VACUUM INTO $SNAP_LOCAL"
 if [[ ! -f "$LAPTOP_DB" ]]; then
